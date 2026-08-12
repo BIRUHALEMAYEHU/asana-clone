@@ -1,20 +1,41 @@
 // Production entrypoint (`npm start`). Kept in Node rather than inline shell so
-// the same script runs under cmd.exe on Windows and /bin/sh on Railway.
-import { mkdirSync } from 'node:fs';
+// the same script runs under cmd.exe on Windows and /bin/sh on Railway/Render.
+import { mkdirSync, unlinkSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-// Railway mounts its volume at /data, and SQLite will not create a missing
-// directory for itself. Derive the directory from DATABASE_URL so the mount
-// point exists before `prisma db push` runs.
+const resolveSqlitePath = () => {
+  const url = process.env.DATABASE_URL;
+  if (!url || !url.startsWith('file:')) return null;
+  const filePath = url.slice('file:'.length);
+  return path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+};
+
+// Set WIPE_DB=true once in the host's env vars to delete the SQLite file on boot,
+// then remove that variable after a successful restart so data is not wiped again.
+const wipeDatabaseIfRequested = () => {
+  if (process.env.WIPE_DB !== 'true') return;
+
+  const filePath = resolveSqlitePath();
+  if (!filePath) {
+    console.warn('[start] WIPE_DB=true but DATABASE_URL is not a file: SQLite path — nothing deleted');
+    return;
+  }
+
+  for (const candidate of [filePath, `${filePath}-journal`, `${filePath}-wal`, `${filePath}-shm`]) {
+    if (existsSync(candidate)) {
+      unlinkSync(candidate);
+      console.log(`[start] WIPE_DB=true — deleted ${candidate}`);
+    }
+  }
+};
+
+// Railway/Render may mount a volume; SQLite will not create a missing directory.
 const ensureDatabaseDir = () => {
   if (process.platform === 'win32') return;
 
-  const url = process.env.DATABASE_URL;
-  if (!url || !url.startsWith('file:')) return;
-
-  const filePath = url.slice('file:'.length);
-  if (!path.isAbsolute(filePath)) return;
+  const filePath = resolveSqlitePath();
+  if (!filePath || !path.isAbsolute(filePath)) return;
 
   try {
     mkdirSync(path.dirname(filePath), { recursive: true });
@@ -44,6 +65,7 @@ const startServer = () => {
   child.on('exit', code => process.exit(code ?? 1));
 };
 
+wipeDatabaseIfRequested();
 ensureDatabaseDir();
 run('prisma', ['db', 'push'])
   .then(startServer)

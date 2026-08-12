@@ -114,6 +114,16 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// Public: whether the first Super Admin signup is still allowed.
+router.get('/signup-status', async (_req, res) => {
+  try {
+    const existingUsers = await prisma.user.count({ where: { isVerified: true } });
+    res.json({ open: existingUsers === 0 });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 router.post('/signup', async (req, res) => {
   try {
     const { email, name, password } = req.body;

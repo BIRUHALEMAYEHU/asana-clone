@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
@@ -16,13 +16,32 @@ export const SignupPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [signupOpen, setSignupOpen] = useState<boolean | null>(inviteToken ? true : null);
   
   const signup = useAuthStore(state => state.signup);
   const acceptInvitationWithToken = useAuthStore(state => state.acceptInvitationWithToken);
   const isLoading = useAuthStore(state => state.isLoading);
   const navigate = useNavigate();
 
-  // When the signup page is opened from an invite link, switch to accept-invitation mode.
+  useEffect(() => {
+    if (inviteToken) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/signup-status');
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled) setSignupOpen(Boolean(data.open));
+      } catch {
+        if (!cancelled) setSignupOpen(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteToken]);
+
   const handleAccept = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteToken || !inviteEmail) {
@@ -82,21 +101,20 @@ export const SignupPage: React.FC = () => {
         >
           <div className="auth-header">
             <div className="auth-logo">
-              <Mail size={28} />
+              <UserPlus size={28} />
             </div>
             <h2>Accept Invitation</h2>
-            <p>You’ve been invited to join a workspace</p>
+            <p>Set a password to join the workspace</p>
           </div>
 
           <form onSubmit={handleAccept} className="auth-form">
             <div className="input-group">
-              <label htmlFor="invite-email">Email</label>
+              <label htmlFor="email">Email</label>
               <div className="input-icon-wrapper">
                 <Mail className="input-icon" size={18} />
                 <input
-                  id="invite-email"
+                  id="email"
                   type="email"
-                  placeholder="you@company.com"
                   value={inviteEmail || ''}
                   disabled
                 />
@@ -148,6 +166,49 @@ export const SignupPage: React.FC = () => {
           <div className="auth-footer">
             <p>
               Invite expired or wrong link?{' '}
+              <Link to="/login">Sign in</Link>
+            </p>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (signupOpen === null) {
+    return (
+      <div className="auth-container">
+        <div className="auth-card">
+          <p style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!signupOpen) {
+    return (
+      <div className="auth-container">
+        <motion.div
+          className="auth-card"
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+        >
+          <div className="auth-header">
+            <div className="auth-logo">
+              <Building2 size={28} />
+            </div>
+            <h2>Invite only</h2>
+            <p>A workspace already exists on this server.</p>
+          </div>
+          <div className="signup-role-info">
+            <p className="role-info-desc">
+              Ask a Super Admin or Department Admin to send you an invitation link.
+              You cannot create another Super Admin from this page.
+            </p>
+          </div>
+          <div className="auth-footer">
+            <p>
+              Already invited? Check your email/link, or{' '}
               <Link to="/login">Sign in</Link>
             </p>
           </div>
