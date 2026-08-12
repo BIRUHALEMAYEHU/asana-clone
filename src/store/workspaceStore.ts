@@ -23,6 +23,7 @@ interface WorkspaceState {
   activityLog: ActivityLogEntry[];
   payroll: PayrollEntry[];
 
+  reset: () => void;
   // Fetch all initial data
   fetchAllData: (workspaceId: string) => Promise<void>;
   
@@ -62,21 +63,37 @@ const throwOnError = async (res: Response, fallback: string) => {
   throw new Error(data.error || fallback);
 };
 
+const emptyWorkspaceState = {
+  workspaces: [] as Workspace[],
+  currentWorkspace: null as Workspace | null,
+  departments: [] as Department[],
+  teams: [] as Team[],
+  projects: [] as Project[],
+  currentProject: null as Project | null,
+  tasks: [] as Task[],
+  comments: [] as Comment[],
+  activityLog: [] as ActivityLogEntry[],
+  payroll: [] as PayrollEntry[],
+};
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  workspaces: [],
-  currentWorkspace: null,
-  departments: [],
-  teams: [],
-  projects: [],
-  currentProject: null,
-  tasks: [],
-  comments: [],
-  activityLog: [],
-  payroll: [],
+  ...emptyWorkspaceState,
+
+  reset: () => set({ ...emptyWorkspaceState }),
 
   fetchAllData: async (workspaceId: string) => {
     const token = getToken();
     if (!token) return;
+
+    // Drop the previous user's departments/projects immediately so invites
+    // cannot target stale IDs from another workspace after logout/login.
+    set({
+      departments: [],
+      projects: [],
+      tasks: [],
+      currentProject: null,
+      currentWorkspace: null,
+    });
 
     try {
       const [deptRes, projRes, wsRes] = await Promise.all([
@@ -88,28 +105,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (deptRes.ok && projRes.ok) {
         const departments = await deptRes.json();
         const projects = await projRes.json();
-        
-        let currentWorkspace = get().currentWorkspace;
-        if (wsRes.ok) {
-          const workspaces = await wsRes.json();
-          currentWorkspace = workspaces.find((w: any) => w.id === workspaceId) || workspaces[0] || {
-            id: workspaceId,
-            name: 'Workspace',
-            ownerId: '',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-        } else {
-          currentWorkspace = {
-            id: workspaceId,
-            name: 'Workspace',
-            ownerId: '',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-        }
+        const workspaces = wsRes.ok ? await wsRes.json() : [];
 
-        set({ departments, projects, currentWorkspace });
+        const currentWorkspace = workspaces.find((w: any) => w.id === workspaceId) || workspaces[0] || {
+          id: workspaceId,
+          name: 'Workspace',
+          ownerId: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        set({ departments, projects, currentWorkspace, workspaces });
         
         // Fetch tasks for all projects
         const allTasks: Task[] = [];

@@ -117,13 +117,26 @@ router.post('/login', async (req, res) => {
 router.post('/signup', async (req, res) => {
   try {
     const { email, name, password } = req.body;
+
+    // After the first Super Admin exists, new people must join via invitation.
+    // Open signup would create a second workspace and break invites against the wrong departments.
+    const existingUsers = await prisma.user.count({ where: { isVerified: true } });
+    if (existingUsers > 0) {
+      return res.status(403).json({
+        error: 'A workspace already exists. Please use an invitation link to join.'
+      });
+    }
     
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
       return res.status(400).json({ error: 'Email already exists' });
     }
 
-    const passwordHash = await bcrypt.hash(password || 'password123', 10);
+    if (!password || String(password).length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
 
     // Create Super Admin first, then create their workspace and attach it.
     const user = await prisma.user.create({

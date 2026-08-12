@@ -357,9 +357,20 @@ const InviteTab: React.FC<{ isSuperAdmin: boolean; fixedDepartmentId?: string }>
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState<Role>('MEMBER');
-  const [departmentId, setDepartmentId] = useState(fixedDepartmentId || departments[0]?.id || '');
+  const [departmentId, setDepartmentId] = useState(fixedDepartmentId || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastInviteUrl, setLastInviteUrl] = useState('');
+
+  // Keep the selected department in sync when the list loads/changes after login.
+  useEffect(() => {
+    if (fixedDepartmentId) {
+      setDepartmentId(fixedDepartmentId);
+      return;
+    }
+    if (!departmentId || !departments.some(d => d.id === departmentId)) {
+      setDepartmentId(departments[0]?.id || '');
+    }
+  }, [departments, fixedDepartmentId, departmentId]);
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
