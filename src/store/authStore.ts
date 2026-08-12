@@ -18,6 +18,7 @@ interface AuthState {
   updateProfile: (data: Partial<User>) => Promise<void>;
   setUser: (user: User | null) => void;
   inviteUser: (email: string, name: string, role: Role, departmentId: string) => Promise<{ inviteUrl?: string; previewUrl?: string | null; message?: string }>;
+  getInvitationLink: (invitationId: string) => Promise<string>;
   declineInvitation: (invitationId: string) => Promise<void>;
   updateUserRole: (userId: string, newRole: Role, departmentId?: string) => Promise<void>;
   removeUser: (userId: string) => Promise<void>;
@@ -161,6 +162,22 @@ export const useAuthStore = create<AuthState>()(
           previewUrl: data.previewUrl,
           message: data.message
         };
+      },
+
+      getInvitationLink: async (invitationId: string) => {
+        const token = localStorage.getItem('token');
+        if (!token) throw new Error('Not authenticated');
+
+        const res = await fetch(`/api/auth/invitations/${invitationId}/link`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to get invitation link');
+        }
+        if (!data.inviteUrl) throw new Error('No invitation link returned');
+        return data.inviteUrl as string;
       },
 
       fetchUsers: async () => {

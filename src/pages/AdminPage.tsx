@@ -3,7 +3,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BarChart, Building2, Users, UserPlus, DollarSign, Settings,
-  CheckSquare, Plus, Pencil, Trash2, XCircle, Bell
+  CheckSquare, Plus, Pencil, Trash2, XCircle, Bell, Copy
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -351,7 +351,7 @@ const UsersTab: React.FC<{ users?: User[], hideDepartment?: boolean }> = ({ user
 };
 
 const InviteTab: React.FC<{ isSuperAdmin: boolean; fixedDepartmentId?: string }> = ({ isSuperAdmin, fixedDepartmentId }) => {
-  const { inviteUser, invitations, declineInvitation } = useAuthStore();
+  const { inviteUser, invitations, declineInvitation, getInvitationLink } = useAuthStore();
   const { departments } = useWorkspaceStore();
   
   const [email, setEmail] = useState('');
@@ -360,6 +360,7 @@ const InviteTab: React.FC<{ isSuperAdmin: boolean; fixedDepartmentId?: string }>
   const [departmentId, setDepartmentId] = useState(fixedDepartmentId || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastInviteUrl, setLastInviteUrl] = useState('');
+  const [copyingId, setCopyingId] = useState<string | null>(null);
 
   // Keep the selected department in sync when the list loads/changes after login.
   useEffect(() => {
@@ -371,6 +372,15 @@ const InviteTab: React.FC<{ isSuperAdmin: boolean; fixedDepartmentId?: string }>
       setDepartmentId(departments[0]?.id || '');
     }
   }, [departments, fixedDepartmentId, departmentId]);
+
+  const copyInviteUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success('Invite link copied');
+    } catch {
+      toast.error('Could not copy — select the link manually');
+    }
+  };
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -391,12 +401,7 @@ const InviteTab: React.FC<{ isSuperAdmin: boolean; fixedDepartmentId?: string }>
       toast.success(`Invitation created for ${email}`);
       if (result.inviteUrl) {
         setLastInviteUrl(result.inviteUrl);
-        try {
-          await navigator.clipboard.writeText(result.inviteUrl);
-          toast.success('Invite link copied. Open it in another tab to accept.');
-        } catch {
-          toast('Copy the invite link shown below and open it in another tab.');
-        }
+        await copyInviteUrl(result.inviteUrl);
       }
       setEmail('');
       setName('');
@@ -414,6 +419,19 @@ const InviteTab: React.FC<{ isSuperAdmin: boolean; fixedDepartmentId?: string }>
       toast.success('Invitation revoked');
     } catch (err: any) {
       toast.error(err.message || 'Failed to revoke invitation');
+    }
+  };
+
+  const handleCopyPendingLink = async (invitationId: string) => {
+    setCopyingId(invitationId);
+    try {
+      const url = await getInvitationLink(invitationId);
+      setLastInviteUrl(url);
+      await copyInviteUrl(url);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to get invitation link');
+    } finally {
+      setCopyingId(null);
     }
   };
 
@@ -472,13 +490,19 @@ const InviteTab: React.FC<{ isSuperAdmin: boolean; fixedDepartmentId?: string }>
             </button>
           </div>
           {lastInviteUrl && (
-            <div style={{ marginTop: '1rem', padding: '1rem', background: 'var(--bg-body)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                Local test invite link (open in another tab/browser):
-              </div>
-              <a href={lastInviteUrl} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all', color: 'var(--primary)' }}>
+            <div style={{ marginTop: '1rem', padding: '1rem', background: 'var(--bg-body)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <a href={lastInviteUrl} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all', color: 'var(--primary)', flex: 1 }}>
                 {lastInviteUrl}
               </a>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: '0.5rem', flexShrink: 0 }}
+                title="Copy link"
+                onClick={() => copyInviteUrl(lastInviteUrl)}
+              >
+                <Copy size={18} />
+              </button>
             </div>
           )}
         </form>
@@ -528,14 +552,25 @@ const InviteTab: React.FC<{ isSuperAdmin: boolean; fixedDepartmentId?: string }>
                   </td>
                   <td style={{ padding: '1rem' }}>
                     {inv.status === 'pending' && (
-                      <button
-                        onClick={() => handleRevoke(inv.id)}
-                        className="btn btn-ghost"
-                        style={{ padding: '0.5rem', color: 'var(--error)' }}
-                        title="Revoke invitation"
-                      >
-                        <XCircle size={18} />
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <button
+                          onClick={() => handleCopyPendingLink(inv.id)}
+                          className="btn btn-ghost"
+                          style={{ padding: '0.5rem', color: 'var(--primary)' }}
+                          title="Copy invite link"
+                          disabled={copyingId === inv.id}
+                        >
+                          <Copy size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleRevoke(inv.id)}
+                          className="btn btn-ghost"
+                          style={{ padding: '0.5rem', color: 'var(--error)' }}
+                          title="Revoke invitation"
+                        >
+                          <XCircle size={18} />
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>

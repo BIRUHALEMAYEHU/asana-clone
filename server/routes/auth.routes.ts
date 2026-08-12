@@ -512,7 +512,7 @@ router.post('/invite', authenticate, async (req: any, res) => {
     res.json({
       message: emailResult.isSmtpConfigured
         ? 'Invitation sent successfully to email'
-        : 'Invitation created. Use inviteUrl for local testing (SMTP not configured / email may be simulated).',
+        : 'Invitation created successfully',
       previewUrl: emailResult.previewUrl,
       inviteUrl,
       invitationId: invitation.id
@@ -520,6 +520,60 @@ router.post('/invite', authenticate, async (req: any, res) => {
   } catch (error) {
     console.error('Invite handler error:', error);
     res.status(500).json({ error: 'Internal server error', details: String(error) });
+  }
+});
+
+// Admin: regenerate a copyable invite link for a pending invitation
+router.post('/invitations/:id/link', authenticate, async (req: any, res) => {
+  try {
+    const { id } = req.params;
+    const actorId = req.user.userId;
+
+    const actor = await prisma.user.findUnique({ where: { id: actorId } });
+    if (!actor) return res.status(404).json({ error: 'User not found' });
+    if (actor.role !== 'SUPER_ADMIN' && actor.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Only admins can copy invitation links' });
+    }
+
+    const invitation = await prisma.invitation.findUnique({ where: { id } });
+    if (!invitation) return res.status(404).json({ error: 'Invitation not found' });
+    if (invitation.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending invitations have a link' });
+    }
+    if (invitation.expiresAt.getTime() < Date.now()) {
+      await prisma.invitation.update({
+        where: { id: invitation.id },
+        data: { status: 'expired' }
+      });
+      return res.status(400).json({ error: 'Invitation expired' });
+    }
+
+    const workspaceId = await resolveWorkspaceId(actor);
+    if (invitation.workspaceId !== workspaceId) {
+      return res.status(403).json({ error: 'Not allowed to access this invitation' });
+    }
+    if (actor.role === 'ADMIN' && invitation.teamId !== actor.teamId) {
+      return res.status(403).json({ error: 'Not allowed to access this invitation' });
+    }
+
+    const remainingMs = invitation.expiresAt.getTime() - Date.now();
+    const expiresInSeconds = Math.max(60, Math.floor(remainingMs / 1000));
+
+    const inviteToken = jwt.sign(
+      { invitationId: invitation.id, email: invitation.email },
+      JWT_SECRET,
+      { expiresIn: expiresInSeconds }
+    );
+
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.get('host');
+    const baseUrl = process.env.FRONTEND_URL || `${protocol}://${host}`;
+    const inviteUrl = `${baseUrl}/#/signup?email=${encodeURIComponent(invitation.email)}&token=${inviteToken}`;
+
+    res.json({ inviteUrl, invitationId: invitation.id });
+  } catch (error) {
+    console.error('Invitation link error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
