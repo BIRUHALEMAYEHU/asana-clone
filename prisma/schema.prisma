@@ -1,0 +1,191 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String     @id @default(uuid())
+  email             String     @unique
+  name              String?
+  passwordHash      String
+  role              String     @default("MEMBER")
+  verificationToken String?
+  isVerified        Boolean    @default(false)
+  profilePic        String?
+  position          String?
+  birthday          String?
+  bankAccount       String?
+  dateJoined        String?
+  bio               String?
+  workspaceId       String?
+  workspace         Workspace? @relation("UserWorkspace", fields: [workspaceId], references: [id])
+  ownedWorkspaces   Workspace[] @relation("WorkspaceOwner")
+  teamId            String?
+  team              Team?      @relation("TeamMembers", fields: [teamId], references: [id])
+  ledTeams          Team[]     @relation("TeamLead")
+  tasks             Task[]     @relation("TaskAssignee")
+  comments          Comment[]
+  notifications     Notification[]
+  activityLogs      ActivityLog[] @relation("ActorLogs")
+  refreshTokens     RefreshToken[]
+  attachments       Attachment[]
+  sentInvitations  Invitation[] @relation("InvitationInvitedBy")
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+}
+
+model Workspace {
+  id          String   @id @default(uuid())
+  name        String
+  ownerId     String
+  owner       User     @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  users       User[]   @relation("UserWorkspace")
+  teams       Team[]
+  projects    Project[]
+  invitations Invitation[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Team {
+  id            String   @id @default(uuid())
+  name          String
+  description   String?
+  color         String?
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id])
+  leadId        String?
+  lead          User?     @relation("TeamLead", fields: [leadId], references: [id])
+  members       User[]    @relation("TeamMembers")
+  projects      Project[]
+  invitations   Invitation[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Project {
+  id            String   @id @default(uuid())
+  name          String
+  description   String?
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id])
+  teamId        String?
+  team          Team?     @relation(fields: [teamId], references: [id])
+  color         String?
+  status        String    @default("ACTIVE")
+  progress      Float     @default(0)
+  startDate     DateTime?
+  dueDate       DateTime?
+  archived      Boolean   @default(false)
+  tasks         Task[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Task {
+  id                String   @id @default(uuid())
+  title             String
+  description       String?
+  projectId         String
+  project           Project @relation(fields: [projectId], references: [id])
+  assigneeId        String?
+  assignee          User?    @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  status            String   @default("TODO")
+  priority          String   @default("MEDIUM")
+  dueDate           DateTime?
+  estimateHours     Float?
+  parentTaskId      String?
+  parentTask        Task?    @relation("Subtasks", fields: [parentTaskId], references: [id])
+  subtasks          Task[]   @relation("Subtasks")
+  order             Int      @default(0)
+  recurrenceRule    String?
+  dependencyId      String?
+  labels            String   @default("[]")
+  customFields      String?
+  comments          Comment[]
+  attachments       Attachment[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Comment {
+  id          String   @id @default(uuid())
+  content     String
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id])
+  taskId      String
+  task        Task @relation(fields: [taskId], references: [id])
+  mentions    String   @default("[]")
+  attachments String   @default("[]")
+  createdAt   DateTime @default(now())
+}
+
+model Attachment {
+  id          String   @id @default(uuid())
+  url         String
+  mimeType    String
+  size        Int
+  uploadedById String
+  uploadedBy   User @relation(fields: [uploadedById], references: [id])
+  taskId      String
+  task        Task @relation(fields: [taskId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  payload   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  actorId   String
+  actor     User     @relation("ActorLogs", fields: [actorId], references: [id])
+  action    String
+  entityId  String
+  entityType String
+  details   String?
+  timestamp DateTime @default(now())
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Invitation {
+  id          String   @id @default(uuid())
+  email       String
+  name        String?
+  role        String   @default("MEMBER")
+  status      String   @default("pending")
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  teamId String?
+  team   Team?     @relation(fields: [teamId], references: [id])
+
+  invitedById String
+  invitedBy   User     @relation("InvitationInvitedBy", fields: [invitedById], references: [id])
+
+  expiresAt  DateTime
+  acceptedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

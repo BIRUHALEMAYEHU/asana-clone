@@ -1,0 +1,57 @@
+# DISABLED: GitHub Pages cannot host this application.
+#
+# GitHub Pages only serves static files. TeamFlow's frontend calls relative
+# /api/... endpoints that are served by the Express app in server/, which also
+# owns the Prisma/SQLite database. Publishing only ./dist produced a green
+# deployment with a completely broken app: login, invitations and every data
+# fetch returned the Pages 404 page.
+#
+# This app needs a Node host that runs `npm start` (Railway, Render, Fly.io, a
+# VPS, ...). See DEPLOYMENT.md for the Railway walkthrough.
+#
+# The workflow is kept, but the automatic push trigger has been removed so it
+# only runs if someone deliberately clicks "Run workflow". Do not re-enable the
+# push trigger unless the frontend is changed to call an absolute API base URL
+# on a separately hosted backend.
+
+name: Deploy to GitHub Pages (disabled)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

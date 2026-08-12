@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      # Without these the server falls back to a hardcoded secret and emits
+      # invitation links pointing at the wrong host.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in a .env file next to this compose file}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3001}
+    volumes:
+      - teamflow-data:/data
+    restart: unless-stopped
+    container_name: teamflow
+
+volumes:
+  teamflow-data:

@@ -1,0 +1,12 @@
+# Nixpacks build configuration (used by Railway).
+# See https://nixpacks.com/docs/configuration/file
+
+[phases.setup]
+# "..." keeps the packages Nixpacks auto-detects (Node, npm) and appends ours.
+# Prisma's query engine links against OpenSSL; pkg-config lets native builds find it.
+nixPkgs = ["...", "openssl", "pkg-config"]
+
+[variables]
+# The build (vite, typescript, prisma CLI) and `npm start` (tsx, prisma CLI) both
+# rely on devDependencies, so the install must not run in production-only mode.
+NPM_CONFIG_PRODUCTION = "false"
