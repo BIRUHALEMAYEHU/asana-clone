@@ -67,7 +67,9 @@ const startServer = () => {
 
 wipeDatabaseIfRequested();
 ensureDatabaseDir();
-run('prisma', ['db', 'push'])
+// Prefer migrate deploy when migration files exist (Postgres); fall back to db push.
+run('prisma', ['migrate', 'deploy'])
+  .catch(() => run('prisma', ['db', 'push']))
   .then(startServer)
   .catch(error => {
     console.error(`[start] ${error.message}`);
