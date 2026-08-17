@@ -1,22 +1,21 @@
 import { Router } from 'express';
 import { prisma } from '../index';
-import { authenticate, resolveWorkspaceId } from './auth.routes';
+import { authenticate } from './auth.routes';
 
 const router = Router();
 router.use(authenticate);
 
 const DEFAULT_PROJECT_COLOR = '#6C5CE7';
 
-// Get projects for workspace
 router.get('/:workspaceId', async (req: any, res) => {
   try {
     const { workspaceId } = req.params;
-    const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    const user = req.actor;
+    if (workspaceId !== user.workspaceId) {
+      return res.status(403).json({ error: 'Cannot list projects in another workspace' });
+    }
 
     const where: any = { workspaceId };
-
-    // Members/Admins only see projects in their department/team.
     if (user.role !== 'SUPER_ADMIN' && user.teamId) {
       where.teamId = user.teamId;
     }
@@ -51,20 +50,17 @@ router.post('/', async (req: any, res) => {
     } = req.body;
     let { workspaceId } = req.body;
 
-    const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    const user = req.actor;
     if (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
       return res.status(403).json({ error: 'Only admins can create a project' });
     }
 
-    const actorWorkspaceId = await resolveWorkspaceId(user);
-    if (!actorWorkspaceId) return res.status(400).json({ error: 'Workspace not found' });
+    const actorWorkspaceId = user.workspaceId;
     if (workspaceId && workspaceId !== actorWorkspaceId) {
       return res.status(403).json({ error: 'Cannot create a project in another workspace' });
     }
     workspaceId = actorWorkspaceId;
 
-    // Department admins can only create projects inside their own department.
     let teamId = deptId || departmentId || bodyTeamId || user.teamId || null;
     if (user.role === 'ADMIN') {
       if (!user.teamId) {
@@ -110,12 +106,8 @@ router.post('/', async (req: any, res) => {
 router.delete('/:id', async (req: any, res) => {
   try {
     const { id } = req.params;
-
-    const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const workspaceId = await resolveWorkspaceId(user);
-    if (!workspaceId) return res.status(400).json({ error: 'Workspace not found' });
+    const user = req.actor;
+    const workspaceId = user.workspaceId;
 
     const project = await prisma.project.findUnique({ where: { id } });
     if (!project) return res.status(404).json({ error: 'Project not found' });

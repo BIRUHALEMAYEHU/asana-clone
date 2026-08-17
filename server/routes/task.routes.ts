@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index';
-import { authenticate, resolveWorkspaceId } from './auth.routes';
+import { authenticate } from './auth.routes';
+import { isUserInWorkspace } from '../membership';
 
 const router = Router();
 router.use(authenticate);
@@ -20,10 +21,8 @@ const serializeTask = (task: any) => {
   return { ...task, labels };
 };
 
-const isAssigneeInWorkspace = async (assigneeId: string, workspaceId: string) => {
-  const assignee = await prisma.user.findFirst({ where: { id: assigneeId, workspaceId } });
-  return Boolean(assignee);
-};
+const isAssigneeInWorkspace = (assigneeId: string, workspaceId: string) =>
+  isUserInWorkspace(assigneeId, workspaceId);
 
 // Get tasks for project
 router.get('/:projectId', async (req: any, res) => {
@@ -42,11 +41,8 @@ router.post('/', async (req: any, res) => {
   try {
     const { title, description, projectId, assigneeId, status, priority, dueDate } = req.body;
 
-    const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const workspaceId = await resolveWorkspaceId(user);
-    if (!workspaceId) return res.status(400).json({ error: 'Workspace not found' });
+    const user = req.actor;
+    const workspaceId = user.workspaceId;
 
     if (!projectId) return res.status(400).json({ error: 'Invalid project' });
     const project = await prisma.project.findFirst({ where: { id: projectId, workspaceId } });
@@ -79,14 +75,12 @@ router.put('/:id', async (req: any, res) => {
     const { id } = req.params;
     const body = req.body || {};
 
-    const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    const user = req.actor;
 
     const task = await prisma.task.findUnique({ where: { id } });
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    const workspaceId = await resolveWorkspaceId(user);
-    if (!workspaceId) return res.status(400).json({ error: 'Workspace not found' });
+    const workspaceId = user.workspaceId;
     const project = await prisma.project.findFirst({ where: { id: task.projectId, workspaceId } });
     if (!project) return res.status(403).json({ error: 'Task is not in your workspace' });
 
@@ -132,14 +126,12 @@ router.delete('/:id', async (req: any, res) => {
   try {
     const { id } = req.params;
 
-    const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    const user = req.actor;
 
     const task = await prisma.task.findUnique({ where: { id } });
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    const workspaceId = await resolveWorkspaceId(user);
-    if (!workspaceId) return res.status(400).json({ error: 'Workspace not found' });
+    const workspaceId = user.workspaceId;
     const project = await prisma.project.findFirst({ where: { id: task.projectId, workspaceId } });
     if (!project) return res.status(403).json({ error: 'Task is not in your workspace' });
 

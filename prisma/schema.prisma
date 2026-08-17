@@ -9,12 +9,15 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// Membership lives on join tables (WorkspaceMember, TeamMember, ProjectMember),
+// not on User. The API still returns workspaceId / departmentId / role on the
+// client user object by reading those tables.
+
 model User {
   id                String     @id @default(uuid())
   email             String     @unique
   name              String?
   passwordHash      String
-  role              String     @default("MEMBER")
   verificationToken String?
   isVerified        Boolean    @default(false)
   profilePic        String?
@@ -23,11 +26,10 @@ model User {
   bankAccount       String?
   dateJoined        String?
   bio               String?
-  workspaceId       String?
-  workspace         Workspace? @relation("UserWorkspace", fields: [workspaceId], references: [id])
+  kebeleIdUrl       String?
+  nationalIdUrl     String?
+
   ownedWorkspaces   Workspace[] @relation("WorkspaceOwner")
-  teamId            String?
-  team              Team?      @relation("TeamMembers", fields: [teamId], references: [id])
   ledTeams          Team[]     @relation("TeamLead")
   tasks             Task[]     @relation("TaskAssignee")
   comments          Comment[]
@@ -35,7 +37,19 @@ model User {
   activityLogs      ActivityLog[] @relation("ActorLogs")
   refreshTokens     RefreshToken[]
   attachments       Attachment[]
-  sentInvitations  Invitation[] @relation("InvitationInvitedBy")
+  sentInvitations   Invitation[] @relation("InvitationInvitedBy")
+
+  memberships              WorkspaceMember[]
+  teamMemberships          TeamMember[]
+  projectMemberships       ProjectMember[]
+  channelMemberships       ChannelMember[]
+  messages                 Message[]
+  directConversationsCreated DirectConversation[] @relation("DirectConversationCreator")
+  directParticipations     DirectParticipant[]
+  payrollItems             PayrollItem[]
+  timeEntries              TimeEntry[]
+  reviewedJoinRequests     WorkspaceJoinRequest[] @relation("JoinRequestReviewer")
+
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 }
@@ -43,14 +57,39 @@ model User {
 model Workspace {
   id          String   @id @default(uuid())
   name        String
+  slug        String?  @unique
+  status      String   @default("ACTIVE") // ACTIVE | PENDING | SUSPENDED
+  plan        String   @default("FREE")   // FREE | STARTER | BUSINESS
+  billingEmail String?
   ownerId     String
   owner       User     @relation("WorkspaceOwner", fields: [ownerId], references: [id])
-  users       User[]   @relation("UserWorkspace")
   teams       Team[]
   projects    Project[]
   invitations Invitation[]
+  members     WorkspaceMember[]
+  channels    Channel[]
+  conversations DirectConversation[]
+  joinRequests WorkspaceJoinRequest[]
+  subscription Subscription?
+  payments     Payment[]
+  payrollRuns  PayrollRun[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        String    @default("MEMBER") // SUPER_ADMIN | ADMIN | MEMBER
+  status      String    @default("ACTIVE") // ACTIVE | DISABLED
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
 }
 
 model Team {
@@ -62,11 +101,27 @@ model Team {
   workspace     Workspace @relation(fields: [workspaceId], references: [id])
   leadId        String?
   lead          User?     @relation("TeamLead", fields: [leadId], references: [id])
-  members       User[]    @relation("TeamMembers")
+  teamMembers   TeamMember[]
   projects      Project[]
   invitations   Invitation[]
+  channels      Channel[]
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   @default("MEMBER") // LEAD | MEMBER
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([userId])
 }
 
 model Project {
@@ -84,8 +139,27 @@ model Project {
   dueDate       DateTime?
   archived      Boolean   @default(false)
   tasks         Task[]
+  members       ProjectMember[]
+  channels      Channel[]
+  timeEntries   TimeEntry[]
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([teamId])
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   @default("MEMBER") // ADMIN | MEMBER  (project admin can receive DMs)
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
 }
 
 model Task {
@@ -110,8 +184,12 @@ model Task {
   customFields      String?
   comments          Comment[]
   attachments       Attachment[]
+  timeEntries       TimeEntry[]
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([assigneeId])
 }
 
 model Comment {
@@ -133,30 +211,35 @@ model Attachment {
   size        Int
   uploadedById String
   uploadedBy   User @relation(fields: [uploadedById], references: [id])
-  taskId      String
-  task        Task @relation(fields: [taskId], references: [id])
+  taskId      String?
+  task        Task? @relation(fields: [taskId], references: [id])
+  messageId   String?
+  message     Message? @relation(fields: [messageId], references: [id])
   createdAt   DateTime @default(now())
 }
 
 model Notification {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  type      String
-  payload   String
-  read      Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  workspaceId String?
+  type        String
+  payload     String
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId, read])
 }
 
 model ActivityLog {
-  id        String   @id @default(uuid())
-  actorId   String
-  actor     User     @relation("ActorLogs", fields: [actorId], references: [id])
-  action    String
-  entityId  String
+  id         String   @id @default(uuid())
+  actorId    String
+  actor      User     @relation("ActorLogs", fields: [actorId], references: [id])
+  action     String
+  entityId   String
   entityType String
-  details   String?
-  timestamp DateTime @default(now())
+  details    String?
+  timestamp  DateTime @default(now())
 }
 
 model RefreshToken {
@@ -189,4 +272,202 @@ model Invitation {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, email])
+}
+
+// Company self-signup / "request a workspace" (SaaS intake). Not used by the app yet.
+model WorkspaceJoinRequest {
+  id            String    @id @default(uuid())
+  companyName   String
+  contactName   String
+  contactEmail  String
+  message       String?
+  status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  workspaceId   String?
+  workspace     Workspace? @relation(fields: [workspaceId], references: [id])
+  reviewedById  String?
+  reviewedBy    User?     @relation("JoinRequestReviewer", fields: [reviewedById], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status])
+}
+
+model Subscription {
+  id                   String    @id @default(uuid())
+  workspaceId          String    @unique
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  provider             String    @default("NONE") // CHAPA | TELEBIRR | SANTIMPAY | OTHER
+  providerCustomerId   String?
+  providerReference    String?
+  plan                 String    @default("FREE")
+  status               String    @default("INACTIVE") // INACTIVE | TRIALING | ACTIVE | PAST_DUE | CANCELED
+  seats                Int       @default(5)
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
+// One checkout / webhook event from a local gateway (Chapa, Telebirr, etc.)
+model Payment {
+  id                String    @id @default(uuid())
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  provider          String
+  providerReference String
+  amount            Float
+  currency          String    @default("ETB")
+  status            String    @default("PENDING") // PENDING | PAID | FAILED | CANCELED
+  purpose           String    @default("PLAN")    // PLAN | SEATS | OTHER
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([provider, providerReference])
+  @@index([workspaceId, status])
+}
+
+model PayrollRun {
+  id          String        @id @default(uuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  period      String
+  status      String        @default("DRAFT") // DRAFT | APPROVED | PAID
+  items       PayrollItem[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([workspaceId, period])
+}
+
+model PayrollItem {
+  id             String     @id @default(uuid())
+  runId          String
+  run            PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User       @relation(fields: [userId], references: [id])
+  departmentId   String?
+  baseSalary     Float      @default(0)
+  bonus          Float      @default(0)
+  deductions     Float      @default(0)
+  netPay         Float      @default(0)
+  status         String     @default("PENDING") // PENDING | APPROVED | PAID
+  employmentType String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+model TimeEntry {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id])
+  minutes   Int
+  date      DateTime
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, date])
+  @@index([projectId])
+}
+
+// Rooms: company-wide, department, or project. Membership is separate from invites.
+model Channel {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type        String    // WORKSPACE | DEPARTMENT | PROJECT
+  name        String
+  teamId      String?
+  team        Team?     @relation(fields: [teamId], references: [id])
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id])
+  isDefault   Boolean   @default(false)
+  members     ChannelMember[]
+  messages    Message[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId, type])
+  @@index([teamId])
+  @@index([projectId])
+}
+
+model ChannelMember {
+  id        String   @id @default(uuid())
+  channelId String
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source    String   @default("AUTO") // AUTO | ADMIN
+  createdAt DateTime @default(now())
+
+  @@unique([channelId, userId])
+  @@index([userId])
+}
+
+// Restricted DMs: members may only thread with project admins / ADMIN / SUPER_ADMIN.
+// Admins may thread with anyone in the same workspace. One thread per pair.
+model DirectConversation {
+  id            String    @id @default(uuid())
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pairKey       String
+  createdById   String
+  createdBy     User      @relation("DirectConversationCreator", fields: [createdById], references: [id])
+  participants  DirectParticipant[]
+  messages      Message[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([workspaceId, pairKey])
+}
+
+model DirectParticipant {
+  id             String             @id @default(uuid())
+  conversationId String
+  conversation   DirectConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime           @default(now())
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String              @id @default(uuid())
+  workspaceId    String
+  channelId      String?
+  channel        Channel?            @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   DirectConversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId       String
+  author         User                @relation(fields: [authorId], references: [id])
+  body           String
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  attachments    Attachment[]
+  reads          MessageRead[]
+  createdAt      DateTime            @default(now())
+
+  @@index([channelId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([workspaceId, createdAt])
+}
+
+model MessageRead {
+  id        String   @id @default(uuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  readAt    DateTime @default(now())
+
+  @@unique([messageId, userId])
+  @@index([userId])
 }

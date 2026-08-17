@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index';
 import { authenticate } from './auth.routes';
+import { addWorkspaceMember } from '../membership';
 
 const router = Router();
 
@@ -9,15 +10,9 @@ router.use(authenticate);
 // Get all workspaces for the authenticated user
 router.get('/', async (req: any, res) => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
     const workspaces = await prisma.workspace.findMany({
       where: {
-        OR: [
-          { ownerId: req.user.userId },
-          ...(user.workspaceId ? [{ id: user.workspaceId }] : [])
-        ]
+        members: { some: { userId: req.user.userId, status: 'ACTIVE' } }
       }
     });
     res.json(workspaces);
@@ -33,9 +28,10 @@ router.post('/', async (req: any, res) => {
     const workspace = await prisma.workspace.create({
       data: {
         name,
-        ownerId: req.user.userId,
+        ownerId: req.user.userId
       }
     });
+    await addWorkspaceMember(req.user.userId, workspace.id, 'SUPER_ADMIN');
     res.status(201).json(workspace);
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });

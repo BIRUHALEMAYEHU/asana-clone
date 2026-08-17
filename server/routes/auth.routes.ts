@@ -3,6 +3,14 @@ import { prisma } from '../index';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
+import {
+  addWorkspaceMember,
+  getActor,
+  getActorForWorkspace,
+  listWorkspaceActors,
+  mapActorForClient,
+  setUserDepartment
+} from '../membership';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
@@ -64,28 +72,17 @@ const sendInvitationEmail = async (email: string, inviteUrl: string) => {
   return { isSmtpConfigured, previewUrl };
 };
 
-export const mapUserForClient = (user: any) => {
-  // Credentials and the invitation/verification secret must never reach the client:
-  // GET /api/auth/users is readable by any authenticated user.
-  const { passwordHash, verificationToken, ...rest } = user;
-  return {
-    ...rest,
-    // Frontend uses departmentId; DB stores it as teamId.
-    departmentId: user.teamId || undefined
-  };
+export const mapUserForClient = async (userId: string) => {
+  const actor = await getActor(userId);
+  if (!actor) return null;
+  return mapActorForClient(actor);
 };
 
-export const resolveWorkspaceId = async (user: any) => {
-  if (user.workspaceId) return user.workspaceId;
-  const owned = await prisma.workspace.findFirst({ where: { ownerId: user.id } });
-  if (owned) {
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { workspaceId: owned.id }
-    });
-    return owned.id;
-  }
-  return null;
+export const resolveWorkspaceId = async (user: { id?: string; workspaceId?: string } | null) => {
+  if (user?.workspaceId) return user.workspaceId;
+  if (!user?.id) return null;
+  const actor = await getActor(user.id);
+  return actor?.workspaceId || null;
 };
 
 router.post('/login', async (req, res) => {
@@ -107,8 +104,12 @@ router.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
-    
-    res.json({ user: mapUserForClient(user), token });
+    const clientUser = await mapUserForClient(user.id);
+    if (!clientUser) {
+      return res.status(403).json({ error: 'User has no workspace membership' });
+    }
+
+    res.json({ user: clientUser, token });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -148,13 +149,11 @@ router.post('/signup', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Create Super Admin first, then create their workspace and attach it.
     const user = await prisma.user.create({
       data: {
         email,
         name,
         passwordHash,
-        role: 'SUPER_ADMIN',
         isVerified: true
       }
     });
@@ -166,28 +165,29 @@ router.post('/signup', async (req, res) => {
       }
     });
 
-    const updatedUser = await prisma.user.update({
-      where: { id: user.id },
-      data: { workspaceId: workspace.id }
-    });
+    await addWorkspaceMember(user.id, workspace.id, 'SUPER_ADMIN');
 
-    const token = jwt.sign({ userId: updatedUser.id }, JWT_SECRET, { expiresIn: '7d' });
-    
-    res.status(201).json({ user: mapUserForClient(updatedUser), token });
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    const clientUser = await mapUserForClient(user.id);
+
+    res.status(201).json({ user: clientUser, token });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // Middleware for authentication
-export const authenticate = (req: any, res: any, next: any) => {
+export const authenticate = async (req: any, res: any, next: any) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ error: 'No token provided' });
-  
+
   const token = authHeader.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded: any = jwt.verify(token, JWT_SECRET);
+    const actor = await getActor(decoded.userId);
+    if (!actor) return res.status(401).json({ error: 'User not found' });
     req.user = decoded;
+    req.actor = actor;
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid token' });
@@ -196,10 +196,7 @@ export const authenticate = (req: any, res: any, next: any) => {
 
 router.get('/me', authenticate, async (req: any, res) => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    
-    res.json(mapUserForClient(user));
+    res.json(mapActorForClient(req.actor));
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -221,11 +218,12 @@ router.patch('/me', authenticate, async (req: any, res) => {
     }
 
     if (Object.keys(data).length === 0) {
-      return res.json(mapUserForClient(user));
+      return res.json(mapActorForClient(req.actor));
     }
 
     const updated = await prisma.user.update({ where: { id: user.id }, data });
-    res.json(mapUserForClient(updated));
+    const clientUser = await mapUserForClient(updated.id);
+    res.json(clientUser);
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -233,9 +231,8 @@ router.patch('/me', authenticate, async (req: any, res) => {
 
 router.get('/users', authenticate, async (req: any, res) => {
   try {
-    // Only return verified users to keep pending invitations separated.
-    const users = await prisma.user.findMany({ where: { isVerified: true } });
-    res.json(users.map(mapUserForClient));
+    const actors = await listWorkspaceActors(req.actor.workspaceId);
+    res.json(actors.map(mapActorForClient));
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -248,42 +245,32 @@ router.patch('/users/:id', authenticate, async (req: any, res) => {
   try {
     const { id } = req.params;
     const { role, departmentId } = req.body || {};
+    const actor = req.actor;
 
-    const actor = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!actor) return res.status(404).json({ error: 'User not found' });
     if (actor.role !== 'SUPER_ADMIN' && actor.role !== 'ADMIN') {
       return res.status(403).json({ error: 'Only admins can modify users' });
     }
 
-    const workspaceId = await resolveWorkspaceId(actor);
-    if (!workspaceId) return res.status(400).json({ error: 'Workspace not found' });
-
-    const target = await prisma.user.findUnique({ where: { id } });
+    const workspaceId = actor.workspaceId;
+    const target = await getActorForWorkspace(id, workspaceId);
     if (!target) return res.status(404).json({ error: 'User not found' });
-    if (target.workspaceId !== workspaceId) {
-      return res.status(403).json({ error: 'User is not in your workspace' });
-    }
 
     if (role !== undefined) {
       if (!ROLES.includes(role)) {
         return res.status(400).json({ error: 'Invalid role' });
       }
-      // The department dropdown resends the user's current role, so only a real
-      // self-change is refused.
       if (target.id === actor.id && role !== target.role) {
         return res.status(400).json({ error: 'You cannot change your own role' });
       }
 
-      // Only a genuine role change is guarded, so the department dropdown resending
-      // the current role still works for the owner and for the last Super Admin.
       if (role !== target.role) {
         const ownedWorkspaces = await prisma.workspace.count({ where: { ownerId: target.id } });
         if (ownedWorkspaces > 0) {
           return res.status(403).json({ error: "The workspace owner's role cannot be changed" });
         }
         if (target.role === 'SUPER_ADMIN') {
-          const superAdmins = await prisma.user.count({
-            where: { workspaceId, role: 'SUPER_ADMIN' }
+          const superAdmins = await prisma.workspaceMember.count({
+            where: { workspaceId, role: 'SUPER_ADMIN', status: 'ACTIVE' }
           });
           if (superAdmins <= 1) {
             return res
@@ -309,8 +296,12 @@ router.patch('/users/:id', authenticate, async (req: any, res) => {
       }
     }
 
-    const data: any = {};
-    if (role !== undefined) data.role = role;
+    if (role !== undefined) {
+      await prisma.workspaceMember.update({
+        where: { workspaceId_userId: { workspaceId, userId: id } },
+        data: { role }
+      });
+    }
     if (departmentId !== undefined) {
       const teamId = departmentId || null;
       if (teamId) {
@@ -319,15 +310,11 @@ router.patch('/users/:id', authenticate, async (req: any, res) => {
           return res.status(400).json({ error: 'Invalid department for this workspace' });
         }
       }
-      data.teamId = teamId;
+      await setUserDepartment(id, workspaceId, teamId);
     }
 
-    if (Object.keys(data).length === 0) {
-      return res.json(mapUserForClient(target));
-    }
-
-    const updated = await prisma.user.update({ where: { id }, data });
-    res.json(mapUserForClient(updated));
+    const updated = await getActorForWorkspace(id, workspaceId);
+    res.json(updated ? mapActorForClient(updated) : null);
   } catch (error) {
     console.error('Update user error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -339,20 +326,14 @@ router.delete('/users/:id', authenticate, async (req: any, res) => {
   try {
     const { id } = req.params;
 
-    const actor = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!actor) return res.status(404).json({ error: 'User not found' });
+    const actor = req.actor;
     if (actor.role !== 'SUPER_ADMIN' && actor.role !== 'ADMIN') {
       return res.status(403).json({ error: 'Only admins can remove users' });
     }
 
-    const workspaceId = await resolveWorkspaceId(actor);
-    if (!workspaceId) return res.status(400).json({ error: 'Workspace not found' });
-
-    const target = await prisma.user.findUnique({ where: { id } });
+    const workspaceId = actor.workspaceId;
+    const target = await getActorForWorkspace(id, workspaceId);
     if (!target) return res.status(404).json({ error: 'User not found' });
-    if (target.workspaceId !== workspaceId) {
-      return res.status(403).json({ error: 'User is not in your workspace' });
-    }
 
     if (target.id === actor.id) {
       return res.status(400).json({ error: 'You cannot remove your own account' });
@@ -420,11 +401,7 @@ router.post('/invite', authenticate, async (req: any, res) => {
       return res.status(400).json({ error: 'Name and email are required' });
     }
 
-    const inviterId = req.user.userId;
-    if (!inviterId) return res.status(401).json({ error: 'Unauthorized' });
-
-    const inviter = await prisma.user.findUnique({ where: { id: inviterId } });
-    if (!inviter) return res.status(404).json({ error: 'Inviter not found' });
+    const inviter = req.actor;
 
     if (inviter.role !== 'SUPER_ADMIN' && inviter.role !== 'ADMIN') {
       return res.status(403).json({ error: 'Only admins can send invitations' });
@@ -435,8 +412,7 @@ router.post('/invite', authenticate, async (req: any, res) => {
       return res.status(403).json({ error: 'Department admins cannot invite Super Admins' });
     }
 
-    const workspaceId = await resolveWorkspaceId(inviter);
-    if (!workspaceId) return res.status(400).json({ error: 'Inviter workspace not found' });
+    const workspaceId = inviter.workspaceId;
 
     // Department admins can only invite into their own department.
     let teamId = departmentId || null;
@@ -482,7 +458,7 @@ router.post('/invite', authenticate, async (req: any, res) => {
         status: 'pending',
         workspaceId,
         teamId,
-        invitedById: inviterId,
+        invitedById: inviter.id,
         expiresAt
       }
     });
@@ -527,10 +503,7 @@ router.post('/invite', authenticate, async (req: any, res) => {
 router.post('/invitations/:id/link', authenticate, async (req: any, res) => {
   try {
     const { id } = req.params;
-    const actorId = req.user.userId;
-
-    const actor = await prisma.user.findUnique({ where: { id: actorId } });
-    if (!actor) return res.status(404).json({ error: 'User not found' });
+    const actor = req.actor;
     if (actor.role !== 'SUPER_ADMIN' && actor.role !== 'ADMIN') {
       return res.status(403).json({ error: 'Only admins can copy invitation links' });
     }
@@ -548,7 +521,7 @@ router.post('/invitations/:id/link', authenticate, async (req: any, res) => {
       return res.status(400).json({ error: 'Invitation expired' });
     }
 
-    const workspaceId = await resolveWorkspaceId(actor);
+    const workspaceId = actor.workspaceId;
     if (invitation.workspaceId !== workspaceId) {
       return res.status(403).json({ error: 'Not allowed to access this invitation' });
     }
@@ -580,14 +553,8 @@ router.post('/invitations/:id/link', authenticate, async (req: any, res) => {
 // Admin: list invitations for the inviter's workspace (pending + accepted + declined)
 router.get('/invitations/pending', authenticate, async (req: any, res) => {
   try {
-    const inviterId = req.user.userId;
-    if (!inviterId) return res.status(401).json({ error: 'Unauthorized' });
-
-    const inviter = await prisma.user.findUnique({ where: { id: inviterId } });
-    if (!inviter) return res.status(404).json({ error: 'User not found' });
-
-    const workspaceId = await resolveWorkspaceId(inviter);
-    if (!workspaceId) return res.status(400).json({ error: 'Inviter workspace not found' });
+    const inviter = req.actor;
+    const workspaceId = inviter.workspaceId;
 
     const where: any = { workspaceId };
 
@@ -651,10 +618,7 @@ router.post('/invitations/accept', async (req: any, res) => {
           email: invitation.email,
           name: finalName,
           passwordHash,
-          role: invitation.role,
-          isVerified: true,
-          workspaceId: invitation.workspaceId,
-          teamId: invitation.teamId
+          isVerified: true
         }
       });
     } else if (user.isVerified) {
@@ -665,12 +629,14 @@ router.post('/invitations/accept', async (req: any, res) => {
         data: {
           name: finalName,
           passwordHash,
-          isVerified: true,
-          role: invitation.role,
-          workspaceId: invitation.workspaceId,
-          teamId: invitation.teamId
+          isVerified: true
         }
       });
+    }
+
+    await addWorkspaceMember(user.id, invitation.workspaceId, invitation.role);
+    if (invitation.teamId) {
+      await setUserDepartment(user.id, invitation.workspaceId, invitation.teamId);
     }
 
     await prisma.invitation.update({
@@ -682,7 +648,8 @@ router.post('/invitations/accept', async (req: any, res) => {
     });
 
     const sessionToken = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
-    res.status(201).json({ user: mapUserForClient(user), token: sessionToken });
+    const clientUser = await mapUserForClient(user.id);
+    res.status(201).json({ user: clientUser, token: sessionToken });
   } catch (error) {
     console.error('Accept invitation error:', error);
     res.status(401).json({ error: 'Invalid or expired invitation token' });
@@ -693,10 +660,7 @@ router.post('/invitations/accept', async (req: any, res) => {
 router.post('/invitations/:id/decline', authenticate, async (req: any, res) => {
   try {
     const { id } = req.params;
-    const inviterId = req.user.userId;
-
-    const inviter = await prisma.user.findUnique({ where: { id: inviterId } });
-    if (!inviter) return res.status(404).json({ error: 'User not found' });
+    const inviter = req.actor;
 
     const invitation = await prisma.invitation.findUnique({ where: { id } });
     if (!invitation) return res.status(404).json({ error: 'Invitation not found' });
@@ -704,7 +668,7 @@ router.post('/invitations/:id/decline', authenticate, async (req: any, res) => {
       return res.status(400).json({ error: 'Only pending invitations can be revoked' });
     }
 
-    const workspaceId = await resolveWorkspaceId(inviter);
+    const workspaceId = inviter.workspaceId;
     if (invitation.workspaceId !== workspaceId) {
       return res.status(403).json({ error: 'Not allowed to revoke this invitation' });
     }

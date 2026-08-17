@@ -1,79 +1,61 @@
 import { Router } from 'express';
 import { prisma } from '../index';
-import { authenticate, resolveWorkspaceId } from './auth.routes';
+import { authenticate } from './auth.routes';
+import { ensureTeamLeadMembership, isUserInWorkspace } from '../membership';
 
 const router = Router();
 router.use(authenticate);
 
 const DEFAULT_COLOR = '#6C5CE7';
 
-// Map a Team row (optionally with members) to the frontend Department shape.
-const mapDepartmentForClient = (team: any) => ({
-  id: team.id,
-  name: team.name,
-  description: team.description || `${team.name} Department`,
-  color: team.color || DEFAULT_COLOR,
-  adminId: team.leadId,
-  memberIds: Array.isArray(team.members) ? team.members.map((m: any) => m.id) : [],
-  memberCount: Array.isArray(team.members) ? team.members.length : 0,
-  budget: 0,
-  expenses: 0,
-  goals: [],
-  createdAt: team.createdAt,
-  updatedAt: team.updatedAt
-});
-
-// A department lead must also belong to the department: the client reads membership
-// from User.teamId (exposed as departmentId), and POST /api/auth/invite refuses an
-// ADMIN with no teamId.
-const syncLeadMembership = async (team: { id: string; leadId: string | null }) => {
-  if (!team.leadId) return;
-  await prisma.user.update({ where: { id: team.leadId }, data: { teamId: team.id } });
+const mapDepartmentForClient = (team: any) => {
+  const memberRows = Array.isArray(team.teamMembers) ? team.teamMembers : [];
+  return {
+    id: team.id,
+    name: team.name,
+    description: team.description || `${team.name} Department`,
+    color: team.color || DEFAULT_COLOR,
+    adminId: team.leadId,
+    memberIds: memberRows.map((m: any) => m.userId),
+    memberCount: memberRows.length,
+    budget: 0,
+    expenses: 0,
+    goals: [],
+    createdAt: team.createdAt,
+    updatedAt: team.updatedAt
+  };
 };
 
-// Get all departments (Teams in schema)
+const departmentInclude = { lead: true, teamMembers: true };
+
 router.get('/:workspaceId', async (req: any, res) => {
   try {
     const { workspaceId } = req.params;
+    if (workspaceId !== req.actor.workspaceId) {
+      return res.status(403).json({ error: 'Cannot list departments in another workspace' });
+    }
     const teams = await prisma.team.findMany({
       where: { workspaceId },
-      include: {
-        lead: true,
-        members: true
-      }
+      include: departmentInclude
     });
-    // Map to frontend Department format
     res.json(teams.map(mapDepartmentForClient));
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Create department (Team)
 router.post('/', async (req: any, res) => {
   try {
     const { name, leadId, color, description } = req.body;
-    let { workspaceId } = req.body;
-
-    const actor = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!actor) return res.status(404).json({ error: 'User not found' });
+    const actor = req.actor;
     if (actor.role !== 'SUPER_ADMIN') {
       return res.status(403).json({ error: 'Only a Super Admin can create a department' });
     }
 
-    const actorWorkspaceId = await resolveWorkspaceId(actor);
-    if (!actorWorkspaceId) return res.status(400).json({ error: 'Workspace not found' });
-    if (workspaceId && workspaceId !== actorWorkspaceId) {
-      return res.status(403).json({ error: 'Cannot create a department in another workspace' });
-    }
-    workspaceId = actorWorkspaceId;
-
+    const workspaceId = actor.workspaceId;
     const nextLeadId = leadId || null;
-    if (nextLeadId) {
-      const lead = await prisma.user.findFirst({ where: { id: nextLeadId, workspaceId } });
-      if (!lead) {
-        return res.status(400).json({ error: 'Invalid department lead for this workspace' });
-      }
+    if (nextLeadId && !(await isUserInWorkspace(nextLeadId, workspaceId))) {
+      return res.status(400).json({ error: 'Invalid department lead for this workspace' });
     }
 
     const team = await prisma.team.create({
@@ -86,13 +68,11 @@ router.post('/', async (req: any, res) => {
       }
     });
 
-    // The frontend derives department membership from User.teamId, so a lead who is
-    // not also a member shows as unassigned and cannot invite into their department.
-    await syncLeadMembership(team);
+    await ensureTeamLeadMembership(team);
 
     const withMembers = await prisma.team.findUnique({
       where: { id: team.id },
-      include: { members: true }
+      include: departmentInclude
     });
 
     res.status(201).json(mapDepartmentForClient(withMembers ?? team));
@@ -102,17 +82,12 @@ router.post('/', async (req: any, res) => {
   }
 });
 
-// Update department (Team)
 router.patch('/:id', async (req: any, res) => {
   try {
     const { id } = req.params;
     const { name, description, color, leadId } = req.body || {};
-
-    const actor = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!actor) return res.status(404).json({ error: 'User not found' });
-
-    const workspaceId = await resolveWorkspaceId(actor);
-    if (!workspaceId) return res.status(400).json({ error: 'Workspace not found' });
+    const actor = req.actor;
+    const workspaceId = actor.workspaceId;
 
     const team = await prisma.team.findUnique({ where: { id } });
     if (!team) return res.status(404).json({ error: 'Department not found' });
@@ -131,26 +106,22 @@ router.patch('/:id', async (req: any, res) => {
     if (color !== undefined) data.color = color || null;
     if (leadId !== undefined) {
       const nextLeadId = leadId || null;
-      if (nextLeadId) {
-        const lead = await prisma.user.findFirst({ where: { id: nextLeadId, workspaceId } });
-        if (!lead) {
-          return res.status(400).json({ error: 'Invalid department lead for this workspace' });
-        }
+      if (nextLeadId && !(await isUserInWorkspace(nextLeadId, workspaceId))) {
+        return res.status(400).json({ error: 'Invalid department lead for this workspace' });
       }
       data.leadId = nextLeadId;
     }
 
     const updated = await prisma.team.update({
       where: { id },
-      data,
-      include: { members: true }
+      data
     });
 
-    await syncLeadMembership(updated);
+    await ensureTeamLeadMembership(updated);
 
     const withMembers = await prisma.team.findUnique({
       where: { id },
-      include: { members: true }
+      include: departmentInclude
     });
 
     res.json(mapDepartmentForClient(withMembers ?? updated));
@@ -160,20 +131,15 @@ router.patch('/:id', async (req: any, res) => {
   }
 });
 
-// Delete department
 router.delete('/:id', async (req: any, res) => {
   try {
     const { id } = req.params;
-
-    const actor = await prisma.user.findUnique({ where: { id: req.user.userId } });
-    if (!actor) return res.status(404).json({ error: 'User not found' });
+    const actor = req.actor;
     if (actor.role !== 'SUPER_ADMIN') {
       return res.status(403).json({ error: 'Only a Super Admin can delete a department' });
     }
 
-    const workspaceId = await resolveWorkspaceId(actor);
-    if (!workspaceId) return res.status(400).json({ error: 'Workspace not found' });
-
+    const workspaceId = actor.workspaceId;
     const team = await prisma.team.findUnique({ where: { id } });
     if (!team) return res.status(404).json({ error: 'Department not found' });
     if (team.workspaceId !== workspaceId) {
@@ -181,7 +147,7 @@ router.delete('/:id', async (req: any, res) => {
     }
 
     const [memberCount, projectCount] = await Promise.all([
-      prisma.user.count({ where: { teamId: id } }),
+      prisma.teamMember.count({ where: { teamId: id } }),
       prisma.project.count({ where: { teamId: id } })
     ]);
 
