@@ -11,6 +11,11 @@ import {
   mapActorForClient,
   setUserDepartment
 } from '../membership';
+import {
+  ensureDepartmentChannel,
+  ensureWorkspaceChannel,
+  syncWorkspaceChannelMembers
+} from '../chat.service';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
@@ -166,6 +171,7 @@ router.post('/signup', async (req, res) => {
     });
 
     await addWorkspaceMember(user.id, workspace.id, 'SUPER_ADMIN');
+    await ensureWorkspaceChannel(workspace.id);
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
     const clientUser = await mapUserForClient(user.id);
@@ -637,6 +643,11 @@ router.post('/invitations/accept', async (req: any, res) => {
     await addWorkspaceMember(user.id, invitation.workspaceId, invitation.role);
     if (invitation.teamId) {
       await setUserDepartment(user.id, invitation.workspaceId, invitation.teamId);
+    }
+
+    await syncWorkspaceChannelMembers(invitation.workspaceId);
+    if (invitation.teamId) {
+      await ensureDepartmentChannel(invitation.teamId);
     }
 
     await prisma.invitation.update({

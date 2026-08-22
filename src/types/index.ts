@@ -159,3 +159,49 @@ export interface PayrollEntry {
   employmentType?: 'Internship' | 'Full-time';
   createdAt: string;
 }
+
+// ── Chat ──
+export type ChannelType = 'WORKSPACE' | 'DEPARTMENT' | 'PROJECT';
+
+export interface ChatPreview {
+  body: string;
+  createdAt: string;
+  authorName: string;
+}
+
+export interface ChatChannel {
+  id: string;
+  type: ChannelType;
+  name: string;
+  teamId?: string;
+  projectId?: string;
+  isDefault?: boolean;
+  lastMessage?: ChatPreview;
+}
+
+export interface ChatConversation {
+  id: string;
+  otherUserId?: string;
+  otherUserName?: string;
+  otherUserProfilePic?: string;
+  updatedAt: string;
+  lastMessage?: ChatPreview;
+}
+
+export interface ChatMessage {
+  id: string;
+  body: string;
+  authorId: string;
+  authorName: string;
+  authorProfilePic?: string;
+  createdAt: string;
+  editedAt?: string;
+}
+
+export interface DmTarget {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  profilePic?: string;
+}

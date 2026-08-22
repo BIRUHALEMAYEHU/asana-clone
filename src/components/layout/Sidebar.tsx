@@ -8,6 +8,7 @@ import {
   CheckSquare, 
   Bell, 
   FolderKanban, 
+  MessageSquare,
   LogOut,
   Shield,
   CreditCard,
@@ -65,6 +66,7 @@ export const Sidebar: React.FC = () => {
             <NavItem to="/projects" icon={FolderKanban} label="Projects" />
             <NavItem to="/my-tasks" icon={CheckSquare} label="My Tasks" />
             <NavItem to="/inbox" icon={Bell} label="Inbox" />
+            <NavItem to="/chat" icon={MessageSquare} label="Chat" />
             <hr className="nav-separator" style={{ margin: '12px 0', border: 'none', borderTop: '1px solid var(--border-color, #333)' }} />
             <NavItem to="/admin" icon={Shield} label="Admin Panel" />
             <NavItem to="/admin/payroll" icon={CreditCard} label="Payroll" />
@@ -79,6 +81,7 @@ export const Sidebar: React.FC = () => {
             <NavItem to="/projects" icon={FolderKanban} label="Department Tasks" />
             <NavItem to="/my-tasks" icon={CheckSquare} label="My Tasks" />
             <NavItem to="/inbox" icon={Bell} label="Inbox" />
+            <NavItem to="/chat" icon={MessageSquare} label="Chat" />
             <hr className="nav-separator" style={{ margin: '12px 0', border: 'none', borderTop: '1px solid var(--border-color, #333)' }} />
             <NavItem to="/admin" icon={Building2} label="Department Mgmt" />
             <hr className="nav-separator" style={{ margin: '12px 0', border: 'none', borderTop: '1px solid var(--border-color, #333)' }} />
@@ -93,6 +96,7 @@ export const Sidebar: React.FC = () => {
             <NavItem to="/projects" icon={FolderKanban} label="Projects" />
             <NavItem to="/my-tasks" icon={CheckSquare} label="My Tasks" />
             <NavItem to="/inbox" icon={Bell} label="Inbox" />
+            <NavItem to="/chat" icon={MessageSquare} label="Chat" />
             <hr className="nav-separator" style={{ margin: '12px 0', border: 'none', borderTop: '1px solid var(--border-color, #333)' }} />
             <NavItem to="/settings" icon={Settings} label="Settings" />
           </>

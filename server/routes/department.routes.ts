@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../index';
 import { authenticate } from './auth.routes';
 import { ensureTeamLeadMembership, isUserInWorkspace } from '../membership';
+import { ensureDepartmentChannel } from '../chat.service';
 
 const router = Router();
 router.use(authenticate);
@@ -69,6 +70,7 @@ router.post('/', async (req: any, res) => {
     });
 
     await ensureTeamLeadMembership(team);
+    await ensureDepartmentChannel(team.id);
 
     const withMembers = await prisma.team.findUnique({
       where: { id: team.id },
@@ -118,6 +120,7 @@ router.patch('/:id', async (req: any, res) => {
     });
 
     await ensureTeamLeadMembership(updated);
+    await ensureDepartmentChannel(updated.id);
 
     const withMembers = await prisma.team.findUnique({
       where: { id },

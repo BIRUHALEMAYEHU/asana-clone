@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User, Role, Invitation } from '../types';
 import { useWorkspaceStore } from './workspaceStore';
+import { useChatStore } from './chatStore';
 
 interface AuthState {
   user: User | null;
@@ -50,6 +51,7 @@ export const useAuthStore = create<AuthState>()(
           const { user, token } = await res.json();
           localStorage.setItem('token', token);
           useWorkspaceStore.getState().reset();
+          useChatStore.getState().reset();
           set({ user, isAuthenticated: true, isLoading: false });
           get().fetchUsers();
         } catch (error) {
@@ -73,6 +75,7 @@ export const useAuthStore = create<AuthState>()(
           const { user, token } = await res.json();
           localStorage.setItem('token', token);
           useWorkspaceStore.getState().reset();
+          useChatStore.getState().reset();
           set({ user, isAuthenticated: true, isLoading: false });
           get().fetchUsers();
         } catch (error) {
@@ -98,6 +101,7 @@ export const useAuthStore = create<AuthState>()(
           const { user, token: sessionToken } = await res.json();
           localStorage.setItem('token', sessionToken);
           useWorkspaceStore.getState().reset();
+          useChatStore.getState().reset();
           set({ user, isAuthenticated: true, isLoading: false });
           get().fetchUsers();
         } catch (error) {
@@ -111,6 +115,7 @@ export const useAuthStore = create<AuthState>()(
         set({ user: null, isAuthenticated: false, allUsers: [], invitations: [] });
         // Prevent the next login from seeing the previous user's departments/projects.
         useWorkspaceStore.getState().reset();
+        useChatStore.getState().reset();
       },
 
       updateProfile: async (data: Partial<User>) => {

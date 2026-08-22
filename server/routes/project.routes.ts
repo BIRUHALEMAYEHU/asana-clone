@@ -8,6 +8,7 @@ import {
   isUserInWorkspace,
   mapProjectMemberForClient
 } from '../membership';
+import { ensureProjectChannel, syncProjectChannelMembers } from '../chat.service';
 
 const router = Router();
 router.use(authenticate);
@@ -89,6 +90,7 @@ router.post('/:projectId/members', async (req: any, res) => {
     }
 
     await addProjectMember(projectId, userId, memberRole);
+    await syncProjectChannelMembers(projectId);
     const row = await prisma.projectMember.findUnique({
       where: { projectId_userId: { projectId, userId } },
       include: memberInclude
@@ -169,6 +171,16 @@ router.delete('/:projectId/members/:userId', async (req: any, res) => {
     await prisma.projectMember.delete({
       where: { projectId_userId: { projectId, userId } }
     });
+
+    const projectChannel = await prisma.channel.findFirst({
+      where: { projectId, type: 'PROJECT' }
+    });
+    if (projectChannel) {
+      await prisma.channelMember.deleteMany({
+        where: { channelId: projectChannel.id, userId, source: 'AUTO' }
+      });
+    }
+
     res.status(204).send();
   } catch (error) {
     console.error('Remove project member error:', error);
@@ -282,6 +294,8 @@ router.post('/', async (req: any, res) => {
     for (const memberId of extraMemberIds) {
       await addProjectMember(project.id, memberId, 'MEMBER');
     }
+
+    await ensureProjectChannel(project.id);
 
     const members = await prisma.projectMember.findMany({ where: { projectId: project.id } });
     res.status(201).json(serializeProject(project, user.id, members));

@@ -13,6 +13,7 @@ import { MyTasksPage } from './pages/MyTasksPage';
 import { InboxPage } from './pages/InboxPage';
 import { AdminPage } from './pages/AdminPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ChatPage } from './pages/ChatPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 export const router = createHashRouter([
@@ -59,6 +60,10 @@ export const router = createHashRouter([
       {
         path: '/inbox',
         element: <InboxPage />,
+      },
+      {
+        path: '/chat',
+        element: <ChatPage />,
       },
       {
         path: '/settings',
