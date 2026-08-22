@@ -168,3 +168,51 @@ export const isUserInWorkspace = async (userId: string, workspaceId: string) => 
   });
   return Boolean(row);
 };
+
+export const addProjectMember = async (
+  projectId: string,
+  userId: string,
+  role: 'ADMIN' | 'MEMBER' = 'MEMBER'
+) => {
+  return prisma.projectMember.upsert({
+    where: { projectId_userId: { projectId, userId } },
+    create: { projectId, userId, role },
+    update: { role }
+  });
+};
+
+export const getProjectMembership = async (projectId: string, userId: string) => {
+  return prisma.projectMember.findUnique({
+    where: { projectId_userId: { projectId, userId } }
+  });
+};
+
+/** Workspace super admin, department admin for that project, or project ADMIN. */
+export const canManageProjectMembers = async (
+  actor: Actor,
+  project: { id: string; workspaceId: string; teamId: string | null }
+) => {
+  if (actor.workspaceId !== project.workspaceId) return false;
+  if (actor.role === 'SUPER_ADMIN') return true;
+  if (actor.role === 'ADMIN' && actor.teamId && project.teamId === actor.teamId) return true;
+  const membership = await getProjectMembership(project.id, actor.id);
+  return membership?.role === 'ADMIN';
+};
+
+export const mapProjectMemberForClient = (row: {
+  id: string;
+  projectId: string;
+  userId: string;
+  role: string;
+  createdAt: Date;
+  user: { id: string; name: string | null; email: string; profilePic: string | null };
+}) => ({
+  id: row.id,
+  projectId: row.projectId,
+  userId: row.userId,
+  role: row.role as 'ADMIN' | 'MEMBER',
+  name: row.user.name || row.user.email,
+  email: row.user.email,
+  profilePic: row.user.profilePic || undefined,
+  createdAt: row.createdAt.toISOString()
+});

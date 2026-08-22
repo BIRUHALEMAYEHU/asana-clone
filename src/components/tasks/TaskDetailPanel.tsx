@@ -17,15 +17,20 @@ interface TaskDetailPanelProps {
 }
 
 export default function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
-  const { tasks, updateTask, deleteTask } = useWorkspaceStore();
+  const { tasks, updateTask, deleteTask, getProjectMembers } = useWorkspaceStore();
   const { user, allUsers, getUsersByDepartment } = useAuthStore();
   const task = tasks.find(t => t.id === taskId);
 
   const assignableUsers = useMemo(() => {
-    if (!user) return [];
+    if (!user || !task) return [];
+    const projectMembers = getProjectMembers(task.projectId);
+    if (projectMembers.length > 0) {
+      const ids = new Set(projectMembers.map(m => m.userId));
+      return allUsers.filter(u => ids.has(u.id));
+    }
     if (user.role === 'SUPER_ADMIN') return allUsers;
     return user.departmentId ? getUsersByDepartment(user.departmentId) : [];
-  }, [user, allUsers, getUsersByDepartment]);
+  }, [user, allUsers, getUsersByDepartment, getProjectMembers, task]);
   
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState(task?.title || '');

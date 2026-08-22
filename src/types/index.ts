@@ -69,6 +69,19 @@ export interface Task {
 }
 
 // ── Project ──
+export type ProjectMemberRole = 'ADMIN' | 'MEMBER';
+
+export interface ProjectMember {
+  id: string;
+  projectId: string;
+  userId: string;
+  role: ProjectMemberRole;
+  name: string;
+  email: string;
+  profilePic?: string;
+  createdAt: string;
+}
+
 export interface Project {
   id: string;
   workspaceId: string;
@@ -77,6 +90,8 @@ export interface Project {
   description: string;
   ownerId: string;
   color: string;
+  memberIds?: string[];
+  memberCount?: number;
   createdAt: string;
   updatedAt: string;
 }

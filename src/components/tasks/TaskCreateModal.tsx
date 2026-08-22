@@ -13,15 +13,9 @@ interface TaskCreateModalProps {
 }
 
 export default function TaskCreateModal({ projectId: initialProjectId, onClose }: TaskCreateModalProps) {
-  const { addTask, projects, currentWorkspace } = useWorkspaceStore();
+  const { addTask, projects, getProjectMembers } = useWorkspaceStore();
   const { user, allUsers, getUsersByDepartment } = useAuthStore();
 
-  const assignableUsers = useMemo(() => {
-    if (!user) return [];
-    if (user.role === 'SUPER_ADMIN') return allUsers;
-    return user.departmentId ? getUsersByDepartment(user.departmentId) : [];
-  }, [user, allUsers, getUsersByDepartment]);
-  
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [projectId, setProjectId] = useState(initialProjectId || (projects[0]?.id || ''));
@@ -30,6 +24,18 @@ export default function TaskCreateModal({ projectId: initialProjectId, onClose }
   const [assigneeId, setAssigneeId] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const assignableUsers = useMemo(() => {
+    if (!user) return [];
+    const activeProjectId = projectId || initialProjectId;
+    const projectMembers = activeProjectId ? getProjectMembers(activeProjectId) : [];
+    if (projectMembers.length > 0) {
+      const ids = new Set(projectMembers.map(m => m.userId));
+      return allUsers.filter(u => ids.has(u.id));
+    }
+    if (user.role === 'SUPER_ADMIN') return allUsers;
+    return user.departmentId ? getUsersByDepartment(user.departmentId) : [];
+  }, [user, allUsers, getUsersByDepartment, getProjectMembers, initialProjectId, projectId]);
 
   const handleSubmit = async (e: React.FormEvent, createAnother: boolean = false) => {
     e.preventDefault();
