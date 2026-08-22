@@ -1,0 +1,21 @@
+---
+description: Never add Cursor as git co-author on commits
+alwaysApply: true
+---
+
+# Git commits — no Cursor attribution
+
+The user (BIRUHALEMAYEHU) must be the sole author on commits. Never add Cursor branding or co-author trailers.
+
+## Forbidden in commit messages and metadata
+
+- `Co-authored-by: Cursor <cursoragent@cursor.com>`
+- Any `Co-authored-by` line referencing Cursor, cursoragent, or the AI
+- Any other Cursor attribution in commits, PR descriptions, or generated artifacts
+
+## When committing
+
+1. Do **not** run bare `git commit` / `git commit --amend` from the agent shell — Cursor injects `Co-authored-by: Cursor <cursoragent@cursor.com>`.
+2. Use `node scripts/git-commit-clean.mjs` after staging files (calls real `git.exe` via `commit-tree`), or give the user exact commands to run locally.
+3. After any commit, verify with `git log -1 --format=%B` that no co-author line exists.
+4. If a co-author trailer appears, rewrite before push (see `scripts/git-commit-clean.mjs` pattern).
