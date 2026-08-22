@@ -10,9 +10,9 @@ if (paths.length === 0) {
   process.exit(1);
 }
 
-const msg = process.env.GIT_COMMIT_MSG;
-if (!msg) {
-  console.error('Set GIT_COMMIT_MSG before running this script.');
+const msgFile = process.env.GIT_COMMIT_MSG_FILE;
+if (!msgFile) {
+  console.error('Set GIT_COMMIT_MSG_FILE to a message file path before running this script.');
   process.exit(1);
 }
 
@@ -22,7 +22,7 @@ for (const p of paths) run(['add', p]);
 
 const tree = run(['write-tree']);
 const parent = run(['rev-parse', 'HEAD']);
-const commit = run(['commit-tree', tree, '-p', parent, '-m', msg]);
+const commit = run(['commit-tree', tree, '-p', parent, '-F', msgFile]);
 run(['reset', '--hard', commit]);
 
 const body = run(['log', '-1', '--format=%B']);
